@@ -245,8 +245,8 @@ CONFIG_SHELL := $(shell if [ -x "$$BASH" ]; then echo $$BASH; \
 
 HOSTCC       = gcc
 HOSTCXX      = g++
-HOSTCFLAGS   = -Wmissing-prototypes -Wstrict-prototypes -O3 -fomit-frame-pointer
-HOSTCXXFLAGS = -O3
+HOSTCFLAGS   = -Wall -Wmissing-prototypes -Wstrict-prototypes -O2 -fomit-frame-pointer
+HOSTCXXFLAGS = -O2
 
 # Decide whether to build built-in, modular, or both.
 # Normally, just do built-in.
@@ -330,7 +330,7 @@ include $(srctree)/scripts/Kbuild.include
 
 AS		= $(CROSS_COMPILE)as
 LD		= $(CROSS_COMPILE)ld
-REAL_CC		= $(CROSS_COMPILE)gcc
+CC		= $(CROSS_COMPILE)gcc
 CPP		= $(CC) -E
 AR		= $(CROSS_COMPILE)ar
 NM		= $(CROSS_COMPILE)nm
@@ -345,18 +345,31 @@ KALLSYMS	= scripts/kallsyms
 PERL		= perl
 CHECK		= sparse
 
-# Use the wrapper for the compiler.  This wrapper scans for new
-# warnings and causes the build to stop upon encountering them.
-CC              = $(srctree)/scripts/gcc-wrapper.py $(REAL_CC)
-
 CHECKFLAGS     := -D__linux__ -Dlinux -D__STDC__ -Dunix -D__unix__ \
-                  -Wbitwise -Wno-return-void $(CF)
-CFLAGS_MODULE   =
-AFLAGS_MODULE   =
+		  -Wbitwise -Wno-return-void $(CF)
+MODFLAGS        = -DMODULE \
+		  -march=armv7-a \
+		  -mfpu=neon-vfpv4 \
+		  -mtune=cortex-a9 \
+		  -Os
+ifdef CONFIG_GCC_48_FIXES
+  MODFLAGS	+=	-fno-aggressive-loop-optimizations \
+			-Wno-sizeof-pointer-memaccess
+endif
+CFLAGS_MODULE   = $(MODFLAGS)
+AFLAGS_MODULE   = $(MODFLAGS)
 LDFLAGS_MODULE  = -T $(srctree)/scripts/module-common.lds
-CFLAGS_KERNEL   = -mcpu=cortex-a15 -mfpu=neon -ftree-vectorize -mvectorize-with-neon-quad
-AFLAGS_KERNEL   = -mcpu=cortex-a15 -mfpu=neon -ftree-vectorize
-CFLAGS_GCOV     = -fprofile-arcs -ftest-coverage -mvectorize-with-neon-quad
+CFLAGS_KERNEL	= -march=armv7-a \
+		  -mfpu=neon-vfpv4 \
+		  -mtune=cortex-a9 \
+		  -Os
+ifdef CONFIG_GCC_48_FIXES
+  CFLAGS_KERNEL	+=	-fno-aggressive-loop-optimizations \
+			-Wno-sizeof-pointer-memaccess
+endif
+AFLAGS_KERNEL	=
+CFLAGS_GCOV	= -fprofile-arcs -ftest-coverage
+
 
 # Use LINUXINCLUDE when you must reference the include/ directory.
 # Needed to be compatible with the O= option
@@ -367,24 +380,20 @@ LINUXINCLUDE    := -I$(srctree)/arch/$(hdr-arch)/include \
 
 KBUILD_CPPFLAGS := -D__KERNEL__
 
-KBUILD_CFLAGS   := -Wstrict-prototypes -Wno-trigraphs \
-                   -fno-strict-aliasing -fno-common \
-                   -Wno-format-security -funsafe-math-optimizations \
-                   -fno-delete-null-pointer-checks -mno-unaligned-access \
-                   -mcpu=cortex-a15 -mfpu=neon -mvectorize-with-neon-quad \
-                   -fsingle-precision-constant -fpredictive-commoning -fipa-cp-clone \
-                   -fgcse-after-reload -ftree-vectorize -pipe \
-                   -funswitch-loops -fvect-cost-model -Wall
-
-ifdef CONFIG_CC_GRAPHITE_OPTIMIZATION
-KBUILD_CFLAGS   := -floop-interchange -floop-strip-mine \
-                   -floop-block
+ifdef CONFIG_GCC_48_FIXES
+  KBUILD_CPPFLAGS	+=	-fno-aggressive-loop-optimizations \
+				-Wno-sizeof-pointer-memaccess
 endif
 
-ifdef CONFIG_CC_LINK_TIME_OPTIMIZATION
-KBUILD_CFLAGS   := -flto -fno-toplevel-reorder
+KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
+		   -fno-strict-aliasing -fno-common \
+		   -Werror-implicit-function-declaration \
+		   -Wno-format-security \
+		   -fno-delete-null-pointer-checks
+ifdef CONFIG_GCC_48_FIXES
+  KBUILD_CFLAGS	+=	-fno-aggressive-loop-optimizations \
+			-Wno-sizeof-pointer-memaccess
 endif
-
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__
@@ -458,7 +467,7 @@ asm-generic:
 
 no-dot-config-targets := clean mrproper distclean \
 			 cscope gtags TAGS tags help %docs check% coccicheck \
-			 include/linux/version.h headers_% archheaders archscripts \
+			 include/linux/version.h headers_% \
 			 kernelversion %src-pkg
 
 config-targets := 0
@@ -576,6 +585,11 @@ all: vmlinux
 
 ifdef CONFIG_CC_OPTIMIZE_FOR_SIZE
 KBUILD_CFLAGS	+= -Os
+  ifdef CONFIG_OPIMIZE_SIZE_GCC_48_FIXES
+    KBUILD_CFLAGS	+=	-Wno-maybe-uninitialized \
+				-fno-aggressive-loop-optimizations \
+				-Wno-sizeof-pointer-memaccess
+  endif
 else
 KBUILD_CFLAGS	+= -O2
 endif
@@ -610,6 +624,9 @@ endif
 
 ifdef CONFIG_DEBUG_INFO
 KBUILD_CFLAGS	+= -g
+ifdef CONFIG_GCC_48_FIXES
+KBUILD_CFLAGS	+=  -gdwarf-2
+endif
 KBUILD_AFLAGS	+= -gdwarf-2
 endif
 
@@ -995,10 +1012,11 @@ prepare1: prepare2 include/linux/version.h include/generated/utsrelease.h \
                    include/config/auto.conf
 	$(cmd_crmodverdir)
 
-archprepare: archheaders archscripts prepare1 scripts_basic
+archprepare: prepare1 scripts_basic
 
 prepare0: archprepare FORCE
 	$(Q)$(MAKE) $(build)=.
+	$(Q)$(MAKE) $(build)=. missing-syscalls
 
 # All the preparing..
 prepare: prepare0
@@ -1062,14 +1080,8 @@ hdr-inst := -rR -f $(srctree)/scripts/Makefile.headersinst obj
 # If we do an all arch process set dst to asm-$(hdr-arch)
 hdr-dst = $(if $(KBUILD_HEADERS), dst=include/asm-$(hdr-arch), dst=include/asm)
 
-PHONY += archheaders
-archheaders:
-
-PHONY += archscripts
-archscripts:
-
 PHONY += __headers
-__headers: include/linux/version.h scripts_basic asm-generic archheaders archscripts FORCE
+__headers: include/linux/version.h scripts_basic asm-generic FORCE
 	$(Q)$(MAKE) $(build)=scripts build_unifdef
 
 PHONY += headers_install_all
